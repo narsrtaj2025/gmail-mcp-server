@@ -33,10 +33,15 @@ startOAuthServer(OAUTH_PORT);
 console.error(`OAuth server listening on ${OAUTH_BASE}`);
 
 /*********************  MCP SERVER INIT  *****************/
-const mcpServer = new Server({
-  name: 'gmail-mcp-server',
-  version: '1.0.0',
-});
+-const mcpServer = new Server({
+-  name: 'gmail-mcp-server',
+-  version: '1.0.0',
+-});
++const mcpServer = new Server({
++  name: 'gmail-mcp-server',
++  version: '1.0.0',
++  capabilities: { tools: true },   // declare tools capability
++});
 
 /*********************  TOOLS DECLARATION  *****************/
 const tools = [
