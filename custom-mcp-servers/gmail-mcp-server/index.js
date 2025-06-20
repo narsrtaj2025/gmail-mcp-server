@@ -16,7 +16,7 @@ import {
 import {
   hasRefreshToken,
   getValidAccessToken,
-} from '../shared/oauth-db/database.js';
+} from './database.js';
 
 import { startOAuthServer } from './oauth-handler.js';
 import { sendEmail, readEmails } from './gmail-api.js';

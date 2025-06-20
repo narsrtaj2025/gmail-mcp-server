@@ -1,13 +1,16 @@
 {
   "name": "gmail-mcp-server",
-  "version": "0.1.0",
-  "type": "module",
-  "description": "Gmail MCP stdio server for LibreChat (uses shared OAuth DB)",
+  "version": "1.0.0",
+  "description": "A standalone MCP server for Gmail integration with LibreChat.",
   "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "latest",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "better-sqlite3": "^9.4.3",
     "express": "^4.18.2",
-    "googleapis": "^128.0.0",
-    "better-sqlite3": "^9.2.2"
+    "googleapis": "^128.0.0"
   }
 }
