@@ -1,129 +1,90 @@
-#!/usr/bin/env node
-/**
- * gmail-mcp-server – stdio MCP for LibreChat
- *
- * • כלים: authenticate_gmail, send_email, read_emails
- * • שומר/טוען טוקנים ב-SQLite משותף (shared/oauth-db)
- */
+import { Server } from '@modelcontextprotocol/sdk';
+import { google } from 'googleapis';
+import Database from '../shared/oauth-db/database.js';
+import 'dotenv/config';
 
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  ListToolsRequestSchema,
-  CallToolRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
-
-import {
-  hasRefreshToken,
-  getValidAccessToken,
-} from './database.js';
-
-import { startOAuthServer } from './oauth-handler.js';
-import { sendEmail, readEmails } from './gmail-api.js';
-
-/*────────────────────  CONFIG  ────────────────────*/
-const PROVIDER   = 'gmail';
-const OAUTH_PORT = process.env.GMAIL_OAUTH_PORT || 3001;
-const OAUTH_BASE = `http://localhost:${OAUTH_PORT}`;
-
-/*─────────────────  START OAUTH HTTP  ─────────────*/
-startOAuthServer(OAUTH_PORT);
-console.error(`OAuth server listening on ${OAUTH_BASE}`);
-
-/*────────────────  MCP SERVER INIT  ───────────────*/
-// חשוב: capabilities.tools=true – נדרש ב-SDK ≥ 1.0
-const mcpServer = new Server({
-  name:    'gmail-mcp-server',
-  version: '1.0.0',
-  capabilities: { tools: true }, 
-});
-
-/*───────────────  TOOL DEFINITIONS  ───────────────*/
+// ------------------ Tools description ------------------
 const tools = [
   {
     name: 'authenticate_gmail',
-    description: 'Connect your Gmail account to enable Gmail tools',
+    description:
+      'Runs the OAuth flow. Execute this once per user to link their Gmail account.',
+    parameters: { type: 'object', properties: {} }
   },
   {
     name: 'send_email',
-    description: 'Send an email via Gmail',
-    inputSchema: {
+    description: 'Send an e-mail from the authenticated Gmail account.',
+    parameters: {
       type: 'object',
-      properties: {
-        to:      { type: 'string', description: 'Recipient email address' },
-        subject: { type: 'string', description: 'Email subject' },
-        body:    { type: 'string', description: 'Plain-text body' },
-      },
       required: ['to', 'subject', 'body'],
-    },
+      properties: {
+        to: { type: 'string', description: 'comma-separated recipients' },
+        subject: { type: 'string' },
+        body: { type: 'string' }
+      }
+    }
   },
   {
     name: 'read_emails',
-    description: 'Read your most recent Gmail messages',
-    inputSchema: {
+    description: 'Read the latest messages in the inbox.',
+    parameters: {
       type: 'object',
       properties: {
-        query:      { type: 'string', description: 'Gmail search query' },
-        maxResults: { type: 'number', description: 'How many emails (default 10)' },
-      },
-    },
-  },
+        max: { type: 'integer', default: 5, description: 'max results' }
+      }
+    }
+  }
 ];
 
-/*───────────────  HANDLERS  ───────────────────────*/
-mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
+// ------------------ Server ------------------
+const server = new Server({ tools });
 
-mcpServer.setRequestHandler(CallToolRequestSchema, async (req) => {
-  const userId = process.env.LIBRECHAT_USER_ID;
-  if (!userId) throw new Error('LIBRECHAT_USER_ID env missing');
+function getOAuthClient(userId) {
+  const db = Database.open(process.env.OAUTH_DB_PATH);
+  const tokens = db.getTokens(userId);
+  const client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+  client.setCredentials(tokens);
+  return client;
+}
 
-  const { name: toolName, arguments: args = {} } = req.params;
-
-  /* 1) AUTHENTICATE */
-  if (toolName === 'authenticate_gmail') {
-    if (hasRefreshToken(userId, PROVIDER)) {
-      return { content: [{ type: 'text', text: '✅ Gmail already connected!' }] };
-    }
-    const url = `${OAUTH_BASE}/auth/start?user=${encodeURIComponent(userId)}`;
-    return {
-      content: [{
-        type: 'text',
-        text: `🔐 Gmail not connected yet.\n\nClick the link below to authenticate:\n${url}\n\nAfter completing the process, rerun your Gmail command.`,
-      }],
-    };
-  }
-
-  /* Require access token for the remaining tools */
-  const accessToken = await getValidAccessToken(userId, PROVIDER);
-  if (!accessToken) {
-    return {
-      content: [{
-        type: 'text',
-        text: '❌ Gmail not connected. Run "authenticate_gmail" first.',
-      }],
-    };
-  }
-
-  /* 2) SEND EMAIL */
-  if (toolName === 'send_email') {
-    const { to, subject, body } = args;
-    const result = await sendEmail(accessToken, { to, subject, body });
-    return { content: [{ type: 'text', text: result }] };
-  }
-
-  /* 3) READ EMAILS */
-  if (toolName === 'read_emails') {
-    const { query = '', maxResults = 10 } = args;
-    const messages = await readEmails(accessToken, { query, maxResults });
-    return { content: [{ type: 'text', text: JSON.stringify(messages, null, 2) }] };
-  }
-
-  throw new Error(`Unknown tool: ${toolName}`);
+server.setRequestHandler('authenticate_gmail', async ({ headers }) => {
+  const userId = headers['x-user-id'];
+  const oAuth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI.replace('{USER_ID}', userId)
+  );
+  const url = oAuth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: ['https://www.googleapis.com/auth/gmail.modify']
+  });
+  return { authorization_url: url };
 });
 
-/*────────────────  TRANSPORT START  ───────────────*/
-(async () => {
-  const transport = new StdioServerTransport();
-  await mcpServer.connect(transport);
-  console.error('gmail-mcp-server ready (stdio)');
-})();
+server.setRequestHandler('send_email', async ({ headers, to, subject, body }) => {
+  const userId = headers['x-user-id'];
+  const auth = getOAuthClient(userId);
+  const gmail = google.gmail({ version: 'v1', auth });
+  await gmail.users.messages.send({
+    userId: 'me',
+    requestBody: {
+      raw: Buffer.from(`To: ${to}\r\nSubject: ${subject}\r\n\r\n${body}`)
+        .toString('base64url')
+    }
+  });
+  return { status: 'sent' };
+});
+
+server.setRequestHandler('read_emails', async ({ headers, max = 5 }) => {
+  const userId = headers['x-user-id'];
+  const auth = getOAuthClient(userId);
+  const gmail = google.gmail({ version: 'v1', auth });
+  const { data } = await gmail.users.messages.list({ userId: 'me', maxResults: max });
+  return data.messages ?? [];
+});
+
+server.listenStdio();
