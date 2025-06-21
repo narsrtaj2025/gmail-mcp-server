@@ -35,7 +35,7 @@ console.error(`OAuth server listening on ${OAUTH_BASE}`);
 const mcpServer = new Server({
   name:    'gmail-mcp-server',
   version: '1.0.0',
-  capabilities: { tools: true },
+  capabilities: { tools: true }, 
 });
 
 /*───────────────  TOOL DEFINITIONS  ───────────────*/
